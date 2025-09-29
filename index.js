@@ -142,7 +142,7 @@ import * as fs from "fs";
         for (const cover_data of res2.data) {
           custom_covers.set(
             parseFloat(cover_data.attributes.volume),
-            `https://uploads.mangadx.org/covers/${id}/${cover_data.attributes.fileName}`,
+            `https://uploads.mangadex.org/covers/${id}/${cover_data.attributes.fileName}`,
           );
         }
       } catch (err) {

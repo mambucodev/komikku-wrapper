@@ -7,23 +7,19 @@ import { extname, join } from "path";
 import * as fs from "fs";
 
 (async () => {
+  const onCancel = () => process.exit(0);
   let app_dir;
 
-  const app_dir_options = [];
-
-  if (fs.existsSync(`${process.env.HOME}/.local/share/komikku`)) {
-    app_dir_options.push({
+  const app_dir_options = [
+    {
       value: `${process.env.HOME}/.local/share/komikku`,
       title: `Local - ${process.env.HOME}/.local/share/komikku`,
-    });
-  }
-
-  if (fs.existsSync(`${process.env.HOME}/.var/app/info.febvre.Komikku`)) {
-    app_dir_options.push({
+    },
+    {
       value: `${process.env.HOME}/.var/app/info.febvre.Komikku/data`,
       title: `Flatpak - ${process.env.HOME}/.var/app/info.febvre.Komikku/data`,
-    });
-  }
+    },
+  ].filter((option) => fs.existsSync(option.value));
 
   switch (app_dir_options.length) {
     case 0:
@@ -34,12 +30,15 @@ import * as fs from "fs";
       app_dir = app_dir_options[0].dir;
       break;
     default:
-      const { selected_app } = await prompts({
-        type: "select",
-        name: "selected_app",
-        message: "Select Komikku App:",
-        choices: app_dir_options,
-      });
+      const { selected_app } = await prompts(
+        {
+          type: "select",
+          name: "selected_app",
+          message: "Select Komikku App:",
+          choices: app_dir_options,
+        },
+        { onCancel },
+      );
       app_dir = selected_app;
       break;
   }
@@ -52,86 +51,127 @@ import * as fs from "fs";
   const destination_parent = join(
     process.env.HOME,
     (
-      await prompts({
-        type: "text",
-        name: "folder",
-        message: "Destination Folder:",
-        initial: "Documents/Manga",
-      })
+      await prompts(
+        {
+          type: "text",
+          name: "folder",
+          message: "Destination Folder:",
+          initial: "Documents/Manga",
+        },
+        { onCancel },
+      )
     ).folder,
   );
 
   const mangas = await db.all("SELECT id, server_id, name FROM mangas;");
 
-  const { selected_manga, format, cover } = await prompts([
-    {
-      type: "select",
-      name: "selected_manga",
-      message: "Select Manga:",
-      choices: mangas.map((manga) => ({ title: manga.name, value: manga.id })),
-    },
-    {
-      type: "select",
-      name: "format",
-      message: "Format:",
-      choices: [
-        { title: "MOBI", value: "MOBI" },
-        { title: "EPUB", value: "EPUB" },
-        { title: "CBZ", value: "CBZ" },
-      ],
-      default: "MOBI",
-    },
-    {
-      type: "toggle",
-      name: "cover",
-      message: "Download Volume Covers:",
-      initial: false,
-      active: "yes",
-      inactive: "no",
-    },
-  ]);
+  const { selected_manga, format, rename, cover } = await prompts(
+    [
+      {
+        type: "select",
+        name: "selected_manga",
+        message: "Select Manga:",
+        choices: mangas.map((manga) => ({
+          title: `${manga.name}${mangas.filter((m) => m.name.toLowerCase() == manga.name.toLowerCase()).length > 1 ? ` - ${manga.server_id}` : ""}`,
+          value: manga.id,
+        })),
+      },
+      {
+        type: "select",
+        name: "format",
+        message: "Format:",
+        choices: [
+          { title: "MOBI", value: "MOBI" },
+          { title: "EPUB", value: "EPUB" },
+          { title: "CBZ", value: "CBZ" },
+        ],
+        default: "MOBI",
+      },
+      {
+        type: "toggle",
+        name: "rename",
+        message: "Rename Chapters:",
+        description:
+          "Rename chapters to their number or leave their original name.",
+        initial: false,
+        active: "yes",
+        inactive: "no",
+      },
+      {
+        type: "toggle",
+        name: "cover",
+        message: "Download Volume Covers:",
+        initial: false,
+        active: "yes",
+        inactive: "no",
+      },
+    ],
+    { onCancel },
+  );
 
   const manga = mangas.find((manga) => manga.id == selected_manga);
 
   const custom_covers = new Map();
   if (cover) {
-    (
-      await fetch(
-        `https://api.mangadex.org/manga?limit=1&title=${encodeURIComponent(manga.name)}`,
-      )
-    )
-      .json()
-      .catch((err) => console.error(err))
-      .then(async (res1) => {
-        if (res1.data.length === 0)
-          return console.log("Volume covers for this manga were not found.");
-        const { id } = res1.data[0];
-        (
-          await fetch(
-            `https://api.mangadex.org/cover?limit=50&manga%5B%5D=${encodeURIComponent(id)}`,
-          )
+    try {
+      const res1 = await (
+        await fetch(
+          `https://api.mangadex.org/manga?limit=1&title=${encodeURIComponent(manga.name)}`,
         )
-          .json()
-          .catch((err) => console.error(err))
-          .then((res2) => {
-            if (res2.data.length === 0)
-              return console.log(
-                "Volume covers for this manga were not found.",
-              );
-            for (const cover_data of res2.data) {
-              custom_covers.set(
-                parseFloat(cover_data.attributes.volume),
-                `https://uploads.mangadex.org/covers/${id}/${cover_data.attributes.fileName}`,
-              );
-            }
-          });
-      });
+      ).json();
+
+      if (res1.data.length === 0) {
+        console.log("Volume covers for this manga were not found.");
+        return;
+      }
+
+      const { id } = res1.data[0];
+
+      try {
+        const res2 = await (
+          await fetch(
+            `https://api.mangadex.org/cover?limit=50&manga%5B%5D=${encodeURIComponent(id)}&locales%5B%5D=ja`,
+          )
+        ).json();
+
+        if (res2.data.length === 0) {
+          console.log("Volume covers for this manga were not found.");
+          return;
+        }
+
+        for (const cover_data of res2.data) {
+          custom_covers.set(
+            parseFloat(cover_data.attributes.volume),
+            `https://uploads.mangadx.org/covers/${id}/${cover_data.attributes.fileName}`,
+          );
+        }
+      } catch (err) {
+        return console.error(err);
+      }
+    } catch (err) {
+      return console.error(err);
+    }
   }
 
   const manga_folder = `${app_dir}/${manga.server_id}/${manga.name}`;
-
   const destination = `${destination_parent}/${manga.name}`;
-  fs.existsSync(destination) && fs.rmSync(destination, { recursive: true });
+
+  if (fs.existsSync(destination)) {
+    const { rmdir } = await prompts(
+      [
+        {
+          type: "confirm",
+          name: "rmdir",
+          message: `Destination folder already exists. Delete it? (${destination})`,
+          initial: false,
+        },
+      ],
+      { onCancel },
+    );
+
+    if (!rmdir) return;
+  }
+  fs.rmSync(destination, { recursive: true });
   fs.mkdirSync(destination);
 
   const chapters = await db.all(
@@ -143,13 +183,16 @@ import * as fs from "fs";
     const stops = [];
 
     async function request_stop() {
-      const response = await prompts({
-        type: "number",
-        float: true,
-        name: "stop",
-        message: `Volume ${stops.length + 1} stops at:`,
-        initial: chapters[chapters.length - 1].num,
-      });
+      const response = await prompts(
+        {
+          type: "number",
+          float: true,
+          name: "stop",
+          message: `Volume ${stops.length + 1} stops at:`,
+          initial: chapters[chapters.length - 1].num,
+        },
+        { onCancel },
+      );
 
       stops.push(parseFloat(response.stop));
 
@@ -189,7 +232,7 @@ import * as fs from "fs";
 
       const pages = fs.readdirSync(chapter_folder);
 
-      const chapter_dir = `${volume_dir}/${chapter.title || `Chapter ${chapter.num}`}`;
+      const chapter_dir = `${volume_dir}/${rename || !chapter.title ? `Chapter ${chapter.num}` : chapter.title}`;
       fs.mkdirSync(chapter_dir);
 
       if (cover && custom_covers.has(parseInt(volume_index) + 1) && i === 0) {

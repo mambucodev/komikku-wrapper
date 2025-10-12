@@ -170,8 +170,8 @@ import * as fs from "fs";
     );
 
     if (!rmdir) return;
+    fs.rmSync(destination, { recursive: true });
   }
-  fs.rmSync(destination, { recursive: true });
   fs.mkdirSync(destination);
 
   const chapters = await db.all(
